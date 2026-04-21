@@ -2,18 +2,34 @@ import logging
 import asyncio
 import sqlite3
 import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 from openai import OpenAI
 
 # Configuração de Logs
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime )s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# O Render permite esconder o token por segurança, mas por enquanto vamos usar direto:
+# Configurações
 TELEGRAM_TOKEN = '8411389438:AAF7IFpEyGtFr0Mp2MlxjzbxTisSC7KedaA'
-# No Render, a API Key do Manus deve ser configurada nas variáveis de ambiente
 client = OpenAI()
 
+# --- TRUQUE PARA O RENDER (Servidor Web Fantasma) ---
+class WebServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(bytes("<html><body><h1>Bot Manus Online!</h1></body></html>", "utf-8"))
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), WebServer)
+    logging.info(f"Servidor Web Fantasma rodando na porta {port}")
+    server.serve_forever()
+
+# --- LÓGICA DO BOT ---
 def init_db():
     conn = sqlite3.connect('memoria_bot.db')
     cursor = conn.cursor()
@@ -63,8 +79,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(response.choices[0].message.content)
     except Exception as e:
-        await update.message.reply_text("Ops, deu erro!")
+        await update.message.reply_text("Ops, deu erro na IA!")
 
+if __name__ == '__main__':
+    init_db()
+    # Inicia o servidor web em uma linha separada (Thread)
+    threading.Thread(target=run_web_server, daemon=True).start()
+    
+    # Inicia o Bot do Telegram
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    application.run_polling()
 if __name__ == '__main__':
     init_db()
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
