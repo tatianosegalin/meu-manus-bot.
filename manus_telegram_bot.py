@@ -1,35 +1,18 @@
 import logging
-import asyncio
 import sqlite3
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 from openai import OpenAI
 
 # Configuração de Logs
-logging.basicConfig(format='%(asctime )s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # Configurações
 TELEGRAM_TOKEN = '8411389438:AAF7IFpEyGtFr0Mp2MlxjzbxTisSC7KedaA'
 client = OpenAI()
 
-# --- TRUQUE PARA O RENDER (Servidor Web Fantasma) ---
-class WebServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        self.wfile.write(bytes("<html><body><h1>Bot Manus Online!</h1></body></html>", "utf-8"))
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), WebServer)
-    logging.info(f"Servidor Web Fantasma rodando na porta {port}")
-    server.serve_forever()
-
-# --- LÓGICA DO BOT ---
+# Banco de Dados Simples
 def init_db():
     conn = sqlite3.connect('memoria_bot.db')
     cursor = conn.cursor()
@@ -55,8 +38,7 @@ def buscar_memoria(user_id):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     user_id = update.message.from_user.id
-    chat_id = update.message.chat_id
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    await context.bot.send_chat_action(chat_id=update.message.chat_id, action="typing")
     
     if user_text.lower().startswith("lembre que"):
         partes = user_text[10:].split(" é ", 1)
@@ -73,25 +55,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
-                {"role": "system", "content": f"Você é o Manus. Informações salvas do usuário: {contexto}"},
+                {"role": "system", "content": f"Você é o Manus. Informações do usuário: {contexto}"},
                 {"role": "user", "content": user_text}
             ]
         )
         await update.message.reply_text(response.choices[0].message.content)
     except Exception as e:
-        await update.message.reply_text("Ops, deu erro na IA!")
+        logging.error(f"Erro na OpenAI: {e}")
+        await update.message.reply_text("Ops, tive um probleminha para pensar agora. Pode repetir?")
 
 if __name__ == '__main__':
     init_db()
-    # Inicia o servidor web em uma linha separada (Thread)
-    threading.Thread(target=run_web_server, daemon=True).start()
-    
-    # Inicia o Bot do Telegram
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    application.run_polling()
-if __name__ == '__main__':
-    init_db()
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    print("Bot Iniciado...")
     application.run_polling()
