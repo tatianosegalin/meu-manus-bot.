@@ -1,6 +1,8 @@
 import logging
 import sqlite3
 import os
+import asyncio
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 from openai import OpenAI
@@ -10,9 +12,13 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 # Configurações
 TELEGRAM_TOKEN = '8411389438:AAF7IFpEyGtFr0Mp2MlxjzbxTisSC7KedaA'
-client = OpenAI()
+RENDER_URL = 'https://meu-manus-bot.onrender.com'
+client = OpenAI( )
 
-# Banco de Dados Simples
+# Flask para receber o "cutucão" do Telegram (Webhook)
+app = Flask(__name__)
+
+# Banco de Dados
 def init_db():
     conn = sqlite3.connect('memoria_bot.db')
     cursor = conn.cursor()
@@ -35,17 +41,23 @@ def buscar_memoria(user_id):
     conn.close()
     return resultado
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Lógica de resposta do Bot
+async def process_update(update_data):
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    update = Update.de_json(update_data, application.bot)
+    
     user_text = update.message.text
     user_id = update.message.from_user.id
-    await context.bot.send_chat_action(chat_id=update.message.chat_id, action="typing")
+    chat_id = update.message.chat_id
+    
+    await application.bot.send_chat_action(chat_id=chat_id, action="typing")
     
     if user_text.lower().startswith("lembre que"):
         partes = user_text[10:].split(" é ", 1)
         if len(partes) == 2:
             chave, valor = partes[0].strip(), partes[1].strip()
             salvar_memoria(user_id, chave, valor)
-            await update.message.reply_text(f"✅ Guardado! {chave} é {valor}.")
+            await application.bot.send_message(chat_id=chat_id, text=f"✅ Guardado! {chave} é {valor}.")
             return
 
     memorias = buscar_memoria(user_id)
@@ -59,14 +71,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 {"role": "user", "content": user_text}
             ]
         )
-        await update.message.reply_text(response.choices[0].message.content)
+        await application.bot.send_message(chat_id=chat_id, text=response.choices[0].message.content)
     except Exception as e:
-        logging.error(f"Erro na OpenAI: {e}")
-        await update.message.reply_text("Ops, tive um probleminha para pensar agora. Pode repetir?")
+        logging.error(f"Erro: {e}")
+        await application.bot.send_message(chat_id=chat_id, text="Ops, tive um probleminha. Tente de novo!")
+
+@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+def telegram_webhook():
+    update_data = request.get_json()
+    asyncio.run(process_update(update_data))
+    return 'OK', 200
+
+@app.route('/')
+def index():
+    return "Bot Manus está Online!", 200
 
 if __name__ == '__main__':
     init_db()
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    print("Bot Iniciado...")
-    application.run_polling()
+    # Configura o Webhook no Telegram
+    import requests
+    requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={RENDER_URL}/{TELEGRAM_TOKEN}" )
+    
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
